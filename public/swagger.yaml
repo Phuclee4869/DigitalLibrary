@@ -1,0 +1,227 @@
+openapi: 3.0.3
+
+info:
+  title: DigitalLibrary API
+  description: API quản lý thư viện số DigitalLibrary
+  version: 1.0.0
+
+servers:
+  - url: http://127.0.0.1:8000
+    description: Local development server
+
+tags:
+  - name: Books
+    description: Quản lý và tra cứu sách
+  - name: Authentication
+    description: Đăng nhập hệ thống
+  - name: Borrow Tickets
+    description: Quản lý phiếu mượn
+  - name: Users
+    description: Quản lý người dùng
+
+paths:
+
+  /api/v1/books:
+    get:
+      tags:
+        - Books
+      summary: Lấy danh sách sách
+      description: Trả về danh sách sách trong thư viện.
+      responses:
+        '200':
+          description: Lấy danh sách sách thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookListResponse'
+        '500':
+          description: Lỗi máy chủ
+
+  /api/v1/login:
+    post:
+      tags:
+        - Authentication
+      summary: Đăng nhập
+      description: Đăng nhập bằng email và mật khẩu để nhận Sanctum token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Đăng nhập thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          description: Email hoặc mật khẩu không đúng
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Dữ liệu đầu vào không hợp lệ
+
+  /api/v1/borrow-tickets:
+    post:
+      tags:
+        - Borrow Tickets
+      summary: Lập phiếu mượn
+      description: Lập phiếu mượn dành cho Admin hoặc Thủ thư.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Lập phiếu mượn thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          description: Chưa xác thực
+        '403':
+          description: Không có quyền thực hiện thao tác
+
+  /api/v1/users/{id}:
+    delete:
+      tags:
+        - Users
+      summary: Xóa người dùng
+      description: Chỉ Admin mới có quyền xóa người dùng.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID của người dùng cần xóa
+          schema:
+            type: integer
+            example: 5
+      responses:
+        '200':
+          description: Xóa người dùng thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteUserResponse'
+        '401':
+          description: Chưa xác thực
+        '403':
+          description: Không có quyền thực hiện thao tác
+
+components:
+
+  securitySchemes:
+
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: Sanctum Token
+
+  schemas:
+
+    LoginRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          example: admin@gmail.com
+        password:
+          type: string
+          format: password
+          example: "123456"
+
+    LoginResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: Đăng nhập thành công.
+        token:
+          type: string
+          example: 1|xxxxxxxxxxxxxxxxxxxxxxxx
+        user:
+          $ref: '#/components/schemas/User'
+
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        email:
+          type: string
+          example: admin@gmail.com
+        role_id:
+          type: integer
+          example: 1
+
+    Book:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        ten_sach:
+          type: string
+          example: Lập trình PHP cơ bản
+        so_luong_con_lai:
+          type: integer
+          example: 10
+
+    BookListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: Lấy danh sách sách thành công.
+        data:
+          type: object
+          description: Danh sách sách được phân trang
+
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: Lập phiếu mượn thành công
+
+    DeleteUserResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: Đã xóa người dùng
+        user_id:
+          type: integer
+          example: 5
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+          example: Email hoặc mật khẩu không đúng.
