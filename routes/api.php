@@ -14,6 +14,12 @@ Route::get('/v1/books', [BookController::class, 'index']);
 
 
 // ===============================
+// API THÊM SÁCH
+// ===============================
+Route::post('/v1/books', [BookController::class, 'store']);
+
+
+// ===============================
 // API ĐĂNG NHẬP
 // ===============================
 Route::post('/v1/login', function (Request $request) {
@@ -50,23 +56,29 @@ Route::post('/v1/login', function (Request $request) {
 // ===============================
 // API YÊU CẦU ĐĂNG NHẬP
 // ===============================
-Route::middleware(['auth:sanctum'])->group(function () {
+Route::middleware(['api.auth:sanctum'])->group(function () {
 
-    // Lập phiếu mượn
-    Route::post('/v1/borrow-tickets', function (Request $request) {
-        return response()->json([
-            'success' => true,
-            'message' => 'Lập phiếu mượn thành công'
-        ]);
-    })->middleware('role:1,2');
+    // ===============================
+    // API LẬP PHIẾU MƯỢN
+    // Chỉ Role 1 và Role 2 được sử dụng
+    // ===============================
+    Route::post(
+        '/v1/borrow-tickets',
+        [BookController::class, 'borrow']
+    )->middleware('role:1,2');
 
 
-    // Xóa người dùng - chỉ Admin
+    // ===============================
+    // API XÓA NGƯỜI DÙNG
+    // Chỉ Admin Role 1
+    // ===============================
     Route::delete('/v1/users/{id}', function ($id) {
+
         return response()->json([
             'success' => true,
             'message' => 'Đã xóa người dùng',
             'user_id' => $id
         ]);
+
     })->middleware('role:1');
 });

@@ -4,75 +4,76 @@ use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Http\Request;
 use Illuminate\Auth\AuthenticationException;
-use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
-        web: __DIR__.'/../routes/web.php',
-        api: __DIR__.'/../routes/api.php',
-        commands: __DIR__.'/../routes/console.php',
+        web: __DIR__ . '/../routes/web.php',
+        api: __DIR__ . '/../routes/api.php',
+        commands: __DIR__ . '/../routes/console.php',
         health: '/up',
     )
 
-    ->withMiddleware(function (Middleware $middleware): void {
-        // Đăng ký alias cho middleware phân quyền
+    ->withMiddleware(function (Middleware $middleware) {
+
+        // ==========================================
+        // MIDDLEWARE PHÂN QUYỀN
+        // ==========================================
         $middleware->alias([
-            'role' => \App\Http\Middleware\CheckRole::class,
+            'role' => \App\Http\Middleware\RoleMiddleware::class,
+            'api.auth' => \App\Http\Middleware\ApiAuthenticate::class,
         ]);
     })
 
-    ->withExceptions(function (Exceptions $exceptions): void {
+    ->withExceptions(function (Exceptions $exceptions) {
 
-        // Lỗi 422: Dữ liệu đầu vào không hợp lệ
-        $exceptions->renderable(function (ValidationException $e, $request) {
+        // ==========================================
+        // CHƯA ĐĂNG NHẬP → 401
+        // ==========================================
+        $exceptions->render(function (
+            AuthenticationException $e,
+            Request $request
+        ) {
             if ($request->is('api/*')) {
                 return response()->json([
                     'success' => false,
-                    'error_code' => 'VALIDATION_FAILED',
-                    'message' => 'Dữ liệu đầu vào không hợp lệ.',
-                    'details' => $e->errors(),
-                    'timestamp' => now()->toIso8601ZuluString()
-                ], 422);
-            }
-        });
-
-        // Lỗi 401: Chưa đăng nhập
-        $exceptions->renderable(function (AuthenticationException $e, $request) {
-            if ($request->is('api/*')) {
-                return response()->json([
-                    'success' => false,
-                    'error_code' => 'UNAUTHORIZED',
-                    'message' => 'Chưa xác thực hoặc token hết hạn',
-                    'details' => null,
-                    'timestamp' => now()->toIso8601ZuluString()
+                    'error_code' => 'UNAUTHENTICATED',
+                    'message' => 'Bạn chưa đăng nhập.'
                 ], 401);
             }
         });
 
-        // Lỗi 403: Không đủ quyền
-        $exceptions->renderable(function (AccessDeniedHttpException $e, $request) {
+        // ==========================================
+        // VALIDATION → 422
+        // ==========================================
+        $exceptions->render(function (
+            ValidationException $e,
+            Request $request
+        ) {
             if ($request->is('api/*')) {
                 return response()->json([
                     'success' => false,
-                    'error_code' => 'FORBIDDEN',
-                    'message' => 'Tài khoản không có quyền thực hiện thao tác này',
-                    'details' => null,
-                    'timestamp' => now()->toIso8601ZuluString()
-                ], 403);
+                    'error_code' => 'VALIDATION_FAILED',
+                    'message' => 'Dữ liệu không hợp lệ.',
+                    'details' => $e->errors()
+                ], 422);
             }
         });
 
-        // Lỗi 404: Không tìm thấy trang/dữ liệu
-        $exceptions->renderable(function (NotFoundHttpException $e, $request) {
+        // ==========================================
+        // NOT FOUND → 404
+        // ==========================================
+        $exceptions->render(function (
+            NotFoundHttpException $e,
+            Request $request
+        ) {
             if ($request->is('api/*')) {
                 return response()->json([
                     'success' => false,
                     'error_code' => 'NOT_FOUND',
-                    'message' => 'Không tìm thấy tài nguyên yêu cầu.',
-                    'details' => null,
-                    'timestamp' => now()->toIso8601ZuluString()
+                    'message' => 'Không tìm thấy dữ liệu yêu cầu.'
                 ], 404);
             }
         });
