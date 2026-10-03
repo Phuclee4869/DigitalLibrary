@@ -5,18 +5,24 @@ namespace App\Exceptions;
 use Exception;
 
 /**
- * Lỗi vi phạm quy tắc nghiệp vụ.
- * Được bootstrap/app.php chuyển thành JSON thống nhất với các lỗi 401/403/404/422.
+ * Lỗi vi phạm quy tắc nghiệp vụ (V3).
  */
 class BusinessException extends Exception
 {
+    protected string $errorCode;
+    protected int $httpStatus;
+    protected ?array $details;
+
     public function __construct(
         string $message,
-        protected string $errorCode = 'BUSINESS_RULE_VIOLATION',
-        protected int $httpStatus = 422,
-        protected ?array $details = null
+        string $errorCode = 'BUSINESS_RULE_VIOLATION',
+        int $httpStatus = 422,
+        ?array $details = null
     ) {
         parent::__construct($message);
+        $this->errorCode = $errorCode;
+        $this->httpStatus = $httpStatus;
+        $this->details = $details;
     }
 
     public function getErrorCode(): string

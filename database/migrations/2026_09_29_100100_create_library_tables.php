@@ -4,12 +4,12 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-/**
- * Các bảng phục vụ nghiệp vụ mượn - trả sách:
- * doc_gia, sach, phieu_muon, chi_tiet_phieu_muon
- */
 return new class extends Migration
 {
+    /**
+     * Các bảng phục vụ nghiệp vụ mượn - trả và gia hạn sách:
+     * doc_gia, sach, phieu_muon, chi_tiet_phieu_muon
+     */
     public function up(): void
     {
         if (!Schema::hasTable('doc_gia')) {
@@ -45,6 +45,7 @@ return new class extends Migration
                 $table->dateTime('han_tra')->nullable();
                 $table->dateTime('ngay_tra')->nullable();
                 $table->string('trang_thai', 30)->default('đang mượn');
+                $table->unsignedTinyInteger('so_lan_gia_han')->default(0);
                 $table->timestamps();
 
                 $table->index('trang_thai', 'idx_phieu_muon_trang_thai');

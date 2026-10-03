@@ -5,26 +5,16 @@ namespace App\Repositories;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
-/**
- * Tầng dữ liệu: truy vấn doc_gia, phieu_muon, chi_tiet_phieu_muon.
- */
 class BorrowRepository
 {
     public const STATUS_BORROWING = 'đang mượn';
     public const STATUS_RETURNED  = 'đã trả';
 
-    /**
-     * Khóa dòng độc giả để hai phiếu mượn của cùng một người không chạy song song.
-     * Phải gọi bên trong DB::transaction.
-     */
     public function findReaderForUpdate(int $id)
     {
         return DB::table('doc_gia')->where('id', $id)->lockForUpdate()->first();
     }
 
-    /**
-     * Tổng số cuốn độc giả đang mượn chưa trả.
-     */
     public function countBooksBorrowing(int $readerId): int
     {
         return (int) DB::table('chi_tiet_phieu_muon as ct')
@@ -37,13 +27,14 @@ class BorrowRepository
     public function createTicket(int $readerId, int $userId, $borrowedAt, $dueAt): int
     {
         return DB::table('phieu_muon')->insertGetId([
-            'doc_gia_id' => $readerId,
-            'user_id'    => $userId,
-            'ngay_muon'  => $borrowedAt,
-            'han_tra'    => $dueAt,
-            'trang_thai' => self::STATUS_BORROWING,
-            'created_at' => $borrowedAt,
-            'updated_at' => $borrowedAt,
+            'doc_gia_id'     => $readerId,
+            'user_id'        => $userId,
+            'ngay_muon'      => $borrowedAt,
+            'han_tra'        => $dueAt,
+            'trang_thai'     => self::STATUS_BORROWING,
+            'so_lan_gia_han' => 0,
+            'created_at'     => $borrowedAt,
+            'updated_at'     => $borrowedAt,
         ]);
     }
 
@@ -51,15 +42,14 @@ class BorrowRepository
     {
         DB::table('chi_tiet_phieu_muon')->insert([
             'phieu_muon_id' => $ticketId,
-            'sach_id'       => $bookId,
-            'so_luong'      => $quantity,
-            'tien_pat'      => 0.00,
+            'sach_id'        => $bookId,
+            'so_luong'        => $quantity,
+            'tien_pat'       => 0.00,
+            'created_at'     => now(),
+            'updated_at'     => now(),
         ]);
     }
 
-    /**
-     * Khóa phiếu mượn khi xử lý trả sách để tránh trả hai lần đồng thời.
-     */
     public function findTicketForUpdate(int $id)
     {
         return DB::table('phieu_muon')->where('id', $id)->lockForUpdate()->first();
@@ -90,6 +80,20 @@ class BorrowRepository
                 'trang_thai' => self::STATUS_RETURNED,
                 'ngay_tra'   => $returnedAt,
                 'updated_at' => $returnedAt,
+            ]);
+    }
+
+    /**
+     * Cập nhật gia hạn phiếu mượn (Luồng 3)
+     */
+    public function renewTicket(int $ticketId, string $newDueDate): void
+    {
+        DB::table('phieu_muon')
+            ->where('id', $ticketId)
+            ->update([
+                'han_tra'        => $newDueDate,
+                'so_lan_gia_han' => DB::raw('so_lan_gia_han + 1'),
+                'updated_at'     => now(),
             ]);
     }
 }

@@ -6,18 +6,12 @@ use App\Http\Requests\BorrowTicketRequest;
 use App\Services\BorrowService;
 use Illuminate\Http\JsonResponse;
 
-/**
- * Tầng giao diện (API): chỉ nhận yêu cầu, gọi service và trả JSON.
- * Không chứa quy tắc nghiệp vụ.
- */
 class BorrowController extends Controller
 {
-    public function __construct(protected BorrowService $borrowService)
-    {
-    }
+    public function __construct(protected BorrowService $borrowService) {}
 
     /**
-     * POST /api/v1/borrow-tickets — Lập phiếu mượn
+     * POST /api/v1/borrow-tickets – Luồng 1: Lập phiếu mượn
      */
     public function store(BorrowTicketRequest $request): JsonResponse
     {
@@ -34,7 +28,7 @@ class BorrowController extends Controller
     }
 
     /**
-     * POST /api/v1/borrow-tickets/{id}/return — Trả sách
+     * POST /api/v1/borrow-tickets/{id}/return – Luồng 2: Trả sách
      */
     public function returnBooks(int $id): JsonResponse
     {
@@ -43,6 +37,20 @@ class BorrowController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Trả sách thành công.',
+            'data'    => $result,
+        ]);
+    }
+
+    /**
+     * POST /api/v1/borrow-tickets/{id}/renew – Luồng 3: Gia hạn phiếu mượn
+     */
+    public function renew(int $id): JsonResponse
+    {
+        $result = $this->borrowService->renewBorrowTicket($id);
+
+        return response()->json([
+            'success' => true,
+            'message' => $result['message'],
             'data'    => $result,
         ]);
     }

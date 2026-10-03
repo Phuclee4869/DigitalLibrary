@@ -4,12 +4,11 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-/**
- * Bổ sung cột role_id cho bảng users (CheckRole và API đăng nhập đang dùng cột này).
- * 1 = Admin, 2 = Thủ thư, 3 = Độc giả
- */
 return new class extends Migration
 {
+    /**
+     * Bổ sung cột role_id cho bảng users (1 = Admin, 2 = Thủ thư, 3 = Độc giả)
+     */
     public function up(): void
     {
         if (!Schema::hasColumn('users', 'role_id')) {

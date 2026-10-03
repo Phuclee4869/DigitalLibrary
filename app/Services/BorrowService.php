@@ -8,73 +8,51 @@ use App\Repositories\BorrowRepository;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
-/**
- * Tầng nghiệp vụ: hai luồng cốt lõi của hệ thống thư viện số
- *   1. Lập phiếu mượn sách
- *   2. Trả sách và tính tiền phạt
- * Mọi quy tắc nghiệp vụ và ranh giới transaction nằm ở đây.
- */
 class BorrowService
 {
-    // ---- Tham số quy tắc nghiệp vụ (có thể chỉnh theo yêu cầu nhóm) ----
-    public const MAX_TITLES_PER_TICKET = 5;     // tối đa 5 đầu sách / phiếu
-    public const MAX_QTY_PER_TITLE     = 3;     // tối đa 3 cuốn / đầu sách
-    public const MAX_BOOKS_PER_READER  = 5;     // tối đa 5 cuốn đang mượn cùng lúc / độc giả
-    public const LOAN_DAYS             = 14;    // thời hạn mượn (ngày)
-    public const FINE_PER_BOOK_PER_DAY = 5000;  // phạt (đồng) / cuốn / ngày trễ
+    public const MAX_TITLES_PER_TICKET = 5;
+    public const MAX_QTY_PER_TITLE     = 3;
+    public const MAX_BOOKS_PER_READER  = 5;
+    public const LOAN_DAYS             = 14;
+    public const FINE_PER_BOOK_PER_DAY = 5000;
 
     public function __construct(
         protected BookRepository $books,
         protected BorrowRepository $borrows
-    ) {
-    }
+    ) {}
 
     /**
-     * LUỒNG 1: Lập phiếu mượn.
-     * Toàn bộ thao tác ghi (phiếu, chi tiết, trừ kho) nằm trong MỘT transaction:
-     * bất kỳ bước nào ném BusinessException đều rollback tất cả.
-     *
-     * @param  int   $userId  Người lập phiếu (admin/thủ thư)
-     * @param  array $data    ['doc_gia_id' => int, 'sach' => [['sach_id' => int, 'so_luong' => int]]]
+     * LUỒNG 1: Lập phiếu mượn (Bọc trong DB::transaction + Pessimistic Lock)
      */
     public function createBorrowTicket(int $userId, array $data): array
     {
         return DB::transaction(function () use ($userId, $data) {
-
-            // QT1: độc giả phải tồn tại (khóa dòng để các phiếu của cùng độc giả chạy tuần tự)
-            $reader = $this->borrows->findReaderForUpdate((int) $data['doc_gia_id']);
+            // QT1: Độc giả tồn tại
+            $reader = $this->borrows->findReaderForUpdate((int)$data['doc_gia_id']);
             if (!$reader) {
-                throw new BusinessException(
-                    'Mã độc giả không tồn tại trong hệ thống.',
-                    'READER_NOT_FOUND',
-                    404
-                );
+                throw new BusinessException('Mã độc giả không tồn tại trong hệ thống.', 'READER_NOT_FOUND', 404);
             }
 
             $items = collect($data['sach'])->map(fn ($i) => [
-                'sach_id'  => (int) $i['sach_id'],
-                'so_luong' => (int) $i['so_luong'],
+                'sach_id'  => (int)$i['sach_id'],
+                'so_luong' => (int)$i['so_luong'],
             ]);
 
-            // QT2: tổng số cuốn đang mượn + mượn mới không vượt giới hạn
+            // QT2: Đang mượn + mượn mới <= 5 cuốn
             $borrowing = $this->borrows->countBooksBorrowing($reader->id);
-            $requested = (int) $items->sum('so_luong');
-            if ($borrowing + $requested > self::MAX_BOOKS_PER_READER) {
+            $requested = (int)$items->sum('so_luong');
+            if (($borrowing + $requested) > self::MAX_BOOKS_PER_READER) {
                 throw new BusinessException(
-                    'Độc giả đang mượn ' . $borrowing . ' cuốn, mượn thêm ' . $requested
-                    . ' cuốn sẽ vượt giới hạn ' . self::MAX_BOOKS_PER_READER . ' cuốn.',
+                    "Độc giả đang mượn {$borrowing} cuốn, mượn thêm {$requested} cuốn sẽ vượt giới hạn " . self::MAX_BOOKS_PER_READER . " cuốn.",
                     'BORROW_LIMIT_EXCEEDED',
                     422,
-                    [
-                        'dang_muon' => $borrowing,
-                        'muon_them' => $requested,
-                        'gioi_han'  => self::MAX_BOOKS_PER_READER,
-                    ]
+                    ['dang_muon' => $borrowing, 'muon_them' => $requested, 'gioi_han' => self::MAX_BOOKS_PER_READER]
                 );
             }
 
-            // Khóa các dòng sách sẽ mượn để không ai trừ kho chen ngang
-            $books = $this->books->getBooksForUpdate($items->pluck('sach_id')->all());
+            // Sắp xếp ID tăng dần để khóa theo thứ tự chống Deadlock (QT13)
+            $sortedIds = $items->pluck('sach_id')->sort()->values()->all();
+            $booksMap = $this->books->getBooksForUpdate($sortedIds);
 
             $now = now();
             $due = $now->copy()->addDays(self::LOAN_DAYS);
@@ -82,43 +60,28 @@ class BorrowService
 
             $lines = [];
             foreach ($items as $item) {
-                $book = $books->get($item['sach_id']);
+                $book = $booksMap->get($item['sach_id']);
 
-                // QT3: sách phải tồn tại
+                // QT3: Sách phải tồn tại
                 if (!$book) {
-                    throw new BusinessException(
-                        "Sách có mã ID {$item['sach_id']} không tồn tại.",
-                        'BOOK_NOT_FOUND',
-                        404,
-                        ['sach_id' => $item['sach_id']]
-                    );
+                    throw new BusinessException("Sách có mã ID {$item['sach_id']} không tồn tại.", 'BOOK_NOT_FOUND', 404, ['sach_id' => $item['sach_id']]);
                 }
 
-                // QT4: kho phải còn đủ số lượng
+                // QT4: Kho phải đủ số lượng
                 if ($book->so_luong_con_lai < $item['so_luong']) {
                     throw new BusinessException(
-                        "Sách \"{$book->ten_sach}\" (ID {$book->id}) chỉ còn "
-                        . "{$book->so_luong_con_lai} cuốn, không đủ {$item['so_luong']} cuốn.",
+                        "Sách "{$book->ten_sach}" (ID {$book->id}) chỉ còn {$book->so_luong_con_lai} cuốn, không đủ {$item['so_luong']} cuốn.",
                         'OUT_OF_STOCK',
                         409,
-                        [
-                            'sach_id' => $book->id,
-                            'con_lai' => (int) $book->so_luong_con_lai,
-                            'yeu_cau' => $item['so_luong'],
-                        ]
+                        ['sach_id' => $book->id, 'con_lai' => (int)$book->so_luong_con_lai, 'yeu_cau' => $item['so_luong']]
                     );
                 }
 
                 $this->borrows->addTicketItem($ticketId, $item['sach_id'], $item['so_luong']);
 
-                // Trừ kho có điều kiện (so_luong_con_lai >= số lượng): lớp bảo vệ thứ hai
+                // Trừ kho nguyên tố
                 if (!$this->books->decreaseStock($item['sach_id'], $item['so_luong'])) {
-                    throw new BusinessException(
-                        "Không thể cập nhật kho cho sách ID {$item['sach_id']}.",
-                        'OUT_OF_STOCK',
-                        409,
-                        ['sach_id' => $item['sach_id']]
-                    );
+                    throw new BusinessException("Không thể cập nhật kho cho sách ID {$item['sach_id']}.", 'OUT_OF_STOCK', 409, ['sach_id' => $item['sach_id']]);
                 }
 
                 $lines[] = [
@@ -140,50 +103,40 @@ class BorrowService
     }
 
     /**
-     * LUỒNG 2: Trả sách (trả toàn bộ phiếu) và tính tiền phạt trễ hạn.
+     * LUỒNG 2: Trả sách và tính phạt
      */
     public function returnBorrowTicket(int $ticketId): array
     {
         return DB::transaction(function () use ($ticketId) {
-
-            // QT5: phiếu phải tồn tại (khóa dòng để tránh hai người cùng bấm "trả")
+            // QT5: Phiếu mượn phải tồn tại
             $ticket = $this->borrows->findTicketForUpdate($ticketId);
             if (!$ticket) {
-                throw new BusinessException(
-                    'Phiếu mượn không tồn tại.',
-                    'TICKET_NOT_FOUND',
-                    404
-                );
+                throw new BusinessException('Phiếu mượn không tồn tại.', 'TICKET_NOT_FOUND', 404);
             }
 
-            // QT6: chỉ trả phiếu đang ở trạng thái "đang mượn"
+            // QT6: Chỉ trả phiếu đang mượn
             if ($ticket->trang_thai !== BorrowRepository::STATUS_BORROWING) {
-                throw new BusinessException(
-                    'Phiếu mượn này đã được trả trước đó.',
-                    'TICKET_ALREADY_RETURNED',
-                    409,
-                    ['trang_thai' => $ticket->trang_thai]
-                );
+                throw new BusinessException('Phiếu mượn này đã được trả trước đó.', 'TICKET_ALREADY_RETURNED', 409, ['trang_thai' => $ticket->trang_thai]);
             }
 
             $returnedAt = now();
-            $lateDays   = $this->calculateLateDays($ticket->han_tra, $returnedAt);
+            $lateDays = $this->calculateLateDays($ticket->han_tra, $returnedAt);
 
-            $lines     = [];
+            $lines = [];
             $totalFine = 0.0;
 
             foreach ($this->borrows->getTicketItems($ticketId) as $item) {
-                // QT7: tiền phạt = số ngày trễ x số cuốn x đơn giá
+                // QT7: Tiền phạt = trễ ngày * số cuốn * đơn giá
                 $fine = (float) ($lateDays * $item->so_luong * self::FINE_PER_BOOK_PER_DAY);
+                $totalFine += $fine;
 
                 $this->borrows->updateItemFine($item->id, $fine);
-                $this->books->increaseStock((int) $item->sach_id, (int) $item->so_luong);
+                $this->books->increaseStock((int)$item->sach_id, (int)$item->so_luong);
 
-                $totalFine += $fine;
                 $lines[] = [
-                    'sach_id'  => (int) $item->sach_id,
+                    'sach_id'  => (int)$item->sach_id,
                     'ten_sach' => $item->ten_sach,
-                    'so_luong' => (int) $item->so_luong,
+                    'so_luong' => (int)$item->so_luong,
                     'tien_pat' => $fine,
                 ];
             }
@@ -202,19 +155,53 @@ class BorrowService
     }
 
     /**
-     * Số ngày trễ, làm tròn lên (trễ 1 giờ vẫn tính 1 ngày). Trả đúng hạn = 0.
+     * LUỒNG 3: Gia hạn phiếu mượn (Bổ sung Buổi 6)
      */
+    public function renewBorrowTicket(int $ticketId): array
+    {
+        return DB::transaction(function () use ($ticketId) {
+            // 1. Khóa dòng phiếu mượn
+            $ticket = $this->borrows->findTicketForUpdate($ticketId);
+
+            if (!$ticket) {
+                throw new BusinessException('Không tìm thấy phiếu mượn.', 'TICKET_NOT_FOUND', 404);
+            }
+
+            // QT9: Kiểm tra trạng thái "đang mượn"
+            if ($ticket->trang_thai !== BorrowRepository::STATUS_BORROWING) {
+                throw new BusinessException('Chỉ phiếu đang mượn mới được gia hạn.', 'TICKET_NOT_BORROWING', 409);
+            }
+
+            // QT11: Kiểm tra giới hạn gia hạn (Tối đa 1 lần)
+            if (($ticket->so_lan_gia_han ?? 0) >= 1) {
+                throw new BusinessException('Phiếu mượn này đã được gia hạn tối đa 1 lần.', 'RENEW_LIMIT_EXCEEDED', 409);
+            }
+
+            // QT10: Kiểm tra quá hạn
+            $dueDate = Carbon::parse($ticket->han_tra);
+            if (now()->greaterThan($dueDate)) {
+                throw new BusinessException('Phiếu mượn đã quá hạn, không thể gia hạn. Vui lòng trả sách và nộp phạt.', 'TICKET_OVERDUE', 422);
+            }
+
+            // QT12: Cộng thêm 14 ngày vào hạn trả
+            $newDueDate = $dueDate->addDays(self::LOAN_DAYS)->toDateTimeString();
+            $this->borrows->renewTicket($ticketId, $newDueDate);
+
+            return [
+                'phieu_muon_id'  => $ticketId,
+                'han_tra_cu'     => $ticket->han_tra,
+                'han_tra_moi'    => $newDueDate,
+                'so_lan_gia_han' => ($ticket->so_lan_gia_han ?? 0) + 1,
+                'message'        => 'Gia hạn phiếu mượn thành công thêm 14 ngày.'
+            ];
+        });
+    }
+
     protected function calculateLateDays($dueAt, Carbon $returnedAt): int
     {
-        if (!$dueAt) {
-            return 0;
-        }
-
+        if (!$dueAt) return 0;
         $due = Carbon::parse($dueAt);
-        if ($returnedAt->timestamp <= $due->timestamp) {
-            return 0;
-        }
-
+        if ($returnedAt->timestamp <= $due->timestamp) return 0;
         return (int) ceil(($returnedAt->timestamp - $due->timestamp) / 86400);
     }
 }
