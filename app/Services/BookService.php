@@ -15,17 +15,11 @@ class BookService
         $this->bookRepository = $bookRepository;
     }
 
-    /**
-     * Lấy danh sách sách
-     */
     public function getBooksList()
     {
         return $this->bookRepository->getBooks(10);
     }
 
-    /**
-     * Xử lý mượn sách
-     */
     public function createBorrowTicket($userId, $data)
     {
         $docGia = DB::table('doc_gia')
@@ -87,9 +81,6 @@ class BookService
         });
     }
 
-    /**
-     * Kiểm tra quyền truy cập phiếu mượn
-     */
     public function checkObjectOwnership(
         $ticketId,
         $userId,
