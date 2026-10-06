@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\BorrowController;
 use App\Http\Controllers\SearchController;
+use App\Http\Controllers\BookController;
 use App\Models\User;
 use App\Services\ActivityLogService;
 use Illuminate\Http\Request;
@@ -57,12 +58,6 @@ Route::prefix('v1')->group(function () {
         Route::get('/activity-logs', [SearchController::class, 'activityLogs'])->middleware('role:1');
     });
 });
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Route;
-use Illuminate\Support\Facades\Hash;
-use App\Models\User;
-use App\Http\Controllers\BookController;
-
 
 // ===============================
 // API LẤY DANH SÁCH SÁCH
