@@ -7,6 +7,7 @@ use Illuminate\Validation\ValidationException;
 use Illuminate\Http\Request;
 use Illuminate\Auth\AuthenticationException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
+use App\Exceptions\BusinessException;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -28,6 +29,28 @@ return Application::configure(basePath: dirname(__DIR__))
     })
 
     ->withExceptions(function (Exceptions $exceptions) {
+
+        // ==========================================
+        // LỖI NGHIỆP VỤ (V3) → JSON chuẩn hóa + ghi nhật ký (Buổi 7)
+        // ==========================================
+        $exceptions->renderable(function (BusinessException $e, Request $request) {
+            if ($request->is('api/*')) {
+                // Giao dịch nghiệp vụ đã rollback nên dòng nhật ký này vẫn được lưu
+                app(\App\Services\ActivityLogService::class)->record(
+                    'error.business', null, null, $e->getMessage(),
+                    ['error_code' => $e->getErrorCode(), 'http_status' => $e->getHttpStatus(),
+                     'method' => $request->method(), 'path' => $request->path()]
+                );
+
+                return response()->json([
+                    'success'    => false,
+                    'error_code' => $e->getErrorCode(),
+                    'message'    => $e->getMessage(),
+                    'details'    => $e->getDetails(),
+                    'timestamp'  => now()->toIso8601ZuluString(),
+                ], $e->getHttpStatus());
+            }
+        });
 
         // ==========================================
         // CHƯA ĐĂNG NHẬP → 401
