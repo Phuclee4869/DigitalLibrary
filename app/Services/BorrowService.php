@@ -18,7 +18,8 @@ class BorrowService
 
     public function __construct(
         protected BookRepository $books,
-        protected BorrowRepository $borrows
+        protected BorrowRepository $borrows,
+        protected ActivityLogService $activityLogs
     ) {}
 
     /**
@@ -26,7 +27,7 @@ class BorrowService
      */
     public function createBorrowTicket(int $userId, array $data): array
     {
-        return DB::transaction(function () use ($userId, $data) {
+        $result = DB::transaction(function () use ($userId, $data) {
             // QT1: Độc giả tồn tại
             $reader = $this->borrows->findReaderForUpdate((int)$data['doc_gia_id']);
             if (!$reader) {
@@ -70,7 +71,7 @@ class BorrowService
                 // QT4: Kho phải đủ số lượng
                 if ($book->so_luong_con_lai < $item['so_luong']) {
                     throw new BusinessException(
-                        "Sách "{$book->ten_sach}" (ID {$book->id}) chỉ còn {$book->so_luong_con_lai} cuốn, không đủ {$item['so_luong']} cuốn.",
+                        "Sách \"{$book->ten_sach}\" (ID {$book->id}) chỉ còn {$book->so_luong_con_lai} cuốn, không đủ {$item['so_luong']} cuốn.",
                         'OUT_OF_STOCK',
                         409,
                         ['sach_id' => $book->id, 'con_lai' => (int)$book->so_luong_con_lai, 'yeu_cau' => $item['so_luong']]
@@ -100,6 +101,16 @@ class BorrowService
                 'sach'          => $lines,
             ];
         });
+
+        // Buổi 7: ghi nhật ký SAU khi giao dịch đã commit
+        $this->activityLogs->record(
+            'borrow.create', 'phieu_muon', $result['phieu_muon_id'],
+            "Lập phiếu mượn #{$result['phieu_muon_id']} cho độc giả #{$result['doc_gia_id']}",
+            ['sach' => $result['sach'], 'han_tra' => $result['han_tra']],
+            $userId
+        );
+
+        return $result;
     }
 
     /**
@@ -107,7 +118,7 @@ class BorrowService
      */
     public function returnBorrowTicket(int $ticketId): array
     {
-        return DB::transaction(function () use ($ticketId) {
+        $result = DB::transaction(function () use ($ticketId) {
             // QT5: Phiếu mượn phải tồn tại
             $ticket = $this->borrows->findTicketForUpdate($ticketId);
             if (!$ticket) {
@@ -152,6 +163,14 @@ class BorrowService
                 'sach'           => $lines,
             ];
         });
+
+        $this->activityLogs->record(
+            'borrow.return', 'phieu_muon', $ticketId,
+            "Trả sách phiếu #{$ticketId}, trễ {$result['so_ngay_tre']} ngày, phạt {$result['tong_tien_phat']}",
+            ['so_ngay_tre' => $result['so_ngay_tre'], 'tong_tien_phat' => $result['tong_tien_phat']]
+        );
+
+        return $result;
     }
 
     /**
@@ -159,7 +178,7 @@ class BorrowService
      */
     public function renewBorrowTicket(int $ticketId): array
     {
-        return DB::transaction(function () use ($ticketId) {
+        $result = DB::transaction(function () use ($ticketId) {
             // 1. Khóa dòng phiếu mượn
             $ticket = $this->borrows->findTicketForUpdate($ticketId);
 
@@ -195,6 +214,14 @@ class BorrowService
                 'message'        => 'Gia hạn phiếu mượn thành công thêm 14 ngày.'
             ];
         });
+
+        $this->activityLogs->record(
+            'borrow.renew', 'phieu_muon', $ticketId,
+            "Gia hạn phiếu #{$ticketId}: {$result['han_tra_cu']} -> {$result['han_tra_moi']}",
+            ['han_tra_cu' => $result['han_tra_cu'], 'han_tra_moi' => $result['han_tra_moi']]
+        );
+
+        return $result;
     }
 
     protected function calculateLateDays($dueAt, Carbon $returnedAt): int

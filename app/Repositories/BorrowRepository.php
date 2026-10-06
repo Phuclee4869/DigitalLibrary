@@ -2,6 +2,8 @@
 
 namespace App\Repositories;
 
+use App\Support\SearchSupport;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -95,5 +97,54 @@ class BorrowRepository
                 'so_lan_gia_han' => DB::raw('so_lan_gia_han + 1'),
                 'updated_at'     => now(),
             ]);
+    }
+
+    /**
+     * Buổi 7 - Tìm kiếm, lọc và phân trang phiếu mượn.
+     */
+    public function searchTickets(array $f, int $perPage, int $page): LengthAwarePaginator
+    {
+        $totalBooks = DB::table('chi_tiet_phieu_muon')
+            ->selectRaw('phieu_muon_id, SUM(so_luong) as tong_so_sach')
+            ->groupBy('phieu_muon_id');
+
+        $query = DB::table('phieu_muon as pm')
+            ->join('doc_gia as dg', 'dg.id', '=', 'pm.doc_gia_id')
+            ->leftJoinSub($totalBooks, 'ct', 'ct.phieu_muon_id', '=', 'pm.id')
+            ->select(
+                'pm.id', 'pm.doc_gia_id', 'dg.ho_ten', 'pm.ngay_muon', 'pm.han_tra',
+                'pm.ngay_tra', 'pm.trang_thai', 'pm.so_lan_gia_han',
+                DB::raw('COALESCE(ct.tong_so_sach, 0) as tong_so_sach')
+            );
+
+        foreach (SearchSupport::splitTerms($f['keyword'] ?? null) as $term) {
+            $query->whereRaw("dg.ho_ten LIKE ? ESCAPE '!'", ['%' . SearchSupport::escapeLike($term) . '%']);
+        }
+
+        if (!empty($f['doc_gia_id'])) {
+            $query->where('pm.doc_gia_id', (int) $f['doc_gia_id']);
+        }
+        if (!empty($f['trang_thai'])) {
+            $query->where('pm.trang_thai', $f['trang_thai']);
+        }
+        if (!empty($f['overdue']) && filter_var($f['overdue'], FILTER_VALIDATE_BOOLEAN)) {
+            $query->where('pm.trang_thai', self::STATUS_BORROWING)->where('pm.han_tra', '<', now());
+        }
+        if (!empty($f['from'])) {
+            $query->where('pm.ngay_muon', '>=', $f['from'] . ' 00:00:00');
+        }
+        if (!empty($f['to'])) {
+            $query->where('pm.ngay_muon', '<=', $f['to'] . ' 23:59:59');
+        }
+
+        $sort  = $f['sort'] ?? 'id';
+        $order = ($f['order'] ?? 'desc') === 'asc' ? 'asc' : 'desc';
+
+        $query->orderBy('pm.' . $sort, $order);
+        if ($sort !== 'id') {
+            $query->orderBy('pm.id', 'desc');
+        }
+
+        return $query->paginate($perPage, ['*'], 'page', $page);
     }
 }

@@ -2,6 +2,8 @@
 
 namespace App\Repositories;
 
+use App\Support\SearchSupport;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -49,5 +51,45 @@ class BookRepository
         DB::table('sach')
             ->where('id', $id)
             ->increment('so_luong_con_lai', $amount);
+    }
+
+    /**
+     * Buổi 7 - Tìm kiếm, lọc, sắp xếp và phân trang danh sách sách.
+     * - Mỗi từ khóa phải khớp tên sách HOẶC tác giả; các từ khóa kết hợp bằng AND.
+     * - Sắp xếp luôn kèm id làm khóa phụ để thứ tự ổn định => không lặp/sót bản ghi giữa các trang.
+     */
+    public function searchBooks(array $f, int $perPage, int $page): LengthAwarePaginator
+    {
+        $query = DB::table('sach')->select(
+            'id', 'ten_sach', 'tac_gia', 'category_id', 'so_luong_con_lai', 'created_at'
+        );
+
+        foreach (SearchSupport::splitTerms($f['keyword'] ?? null) as $term) {
+            $like = '%' . SearchSupport::escapeLike($term) . '%';
+            $query->where(function ($w) use ($like) {
+                $w->whereRaw("ten_sach LIKE ? ESCAPE '!'", [$like])
+                  ->orWhereRaw("tac_gia LIKE ? ESCAPE '!'", [$like]);
+            });
+        }
+
+        if (!empty($f['category_id'])) {
+            $query->where('category_id', (int) $f['category_id']);
+        }
+
+        if (array_key_exists('available', $f) && $f['available'] !== null) {
+            filter_var($f['available'], FILTER_VALIDATE_BOOLEAN)
+                ? $query->where('so_luong_con_lai', '>', 0)
+                : $query->where('so_luong_con_lai', '=', 0);
+        }
+
+        $sort  = $f['sort'] ?? 'id';
+        $order = ($f['order'] ?? 'asc') === 'desc' ? 'desc' : 'asc';
+
+        $query->orderBy($sort, $order);
+        if ($sort !== 'id') {
+            $query->orderBy('id', 'asc'); // khóa phụ cố định
+        }
+
+        return $query->paginate($perPage, ['*'], 'page', $page);
     }
 }
