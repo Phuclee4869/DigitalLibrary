@@ -3,33 +3,40 @@
 namespace App\Repositories;
 
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class ReportRepository {
-    
+
+    // Biểu thức tháng theo driver: chỉ nhận hằng cố định, không chứa dữ liệu người dùng
+    private const MONTH_EXPR = [
+        'sqlite' => "strftime('%Y-%m', borrow_date)",
+        'mysql'  => "DATE_FORMAT(borrow_date, '%Y-%m')",
+    ];
+
     // 1. Truy vấn Báo cáo 1: Thống kê Tổng quan (Dashboard Summary)
     public function getSummary() {
         return (object) [
             'tong_so_sach' => DB::table('books')->count(),
             'tong_sach_con_lai' => DB::table('books')->sum('stock') ?? 0,
             'tong_doc_gia' => DB::table('users')->count(),
-            'tong_phieu_dang_muon' => Schema::hasTable('borrow_records') 
-                ? DB::table('borrow_records')->where('status', 'borrowed')->count() 
+            'tong_phieu_dang_muon' => Schema::hasTable('borrow_records')
+                ? DB::table('borrow_records')->where('status', 'borrowed')->count()
                 : 0,
         ];
     }
 
     // 2. Truy vấn Báo cáo 2: Top Sách mượn nhiều nhất (Top Borrowed Books)
-    // Kỹ thuật: Kết hợp JOIN bảng borrow_items/borrow_records với books và categories
     public function getTopBorrowedBooks($limit = 10) {
-        // Kiểm tra xem hệ thống dùng bảng chi tiết phiếu mượn nào để query chính xác
+        $limit = max(1, min((int) $limit, 50));   // ép kiểu số và chặn trên
+
         if (Schema::hasTable('borrow_items') && Schema::hasTable('categories')) {
             return DB::table('borrow_items')
                 ->join('books', 'borrow_items.book_id', '=', 'books.id')
                 ->leftJoin('categories', 'books.category_id', '=', 'categories.id')
                 ->select(
-                    'books.id', 
-                    'books.title as ten_sach', 
-                    'books.author as tac_gia', 
+                    'books.id',
+                    'books.title as ten_sach',
+                    'books.author as tac_gia',
                     'categories.name as ten_danh_muc',
                     DB::raw('SUM(borrow_items.quantity) as tong_luot_muon')
                 )
@@ -38,7 +45,7 @@ class ReportRepository {
                 ->limit($limit)
                 ->get();
         }
-        
+
         // Fallback an toàn nếu cấu trúc bảng đơn giản hóa
         return DB::table('books')
             ->select('id', 'title as ten_sach', 'author as tac_gia', 'stock as tong_luot_muon')
@@ -48,21 +55,13 @@ class ReportRepository {
     }
 
     // 3. Truy vấn Báo cáo 3: Thống kê Mượn/Trả & Doanh thu Tiền phạt theo tháng
-    // Kỹ thuật: Nhóm theo năm-tháng, đếm số phiếu mượn và tổng tiền phạt
     public function getMonthlyBorrowAndFines() {
         if (Schema::hasTable('borrow_records')) {
-            // Tương thích SQLite / MySQL cho việc cắt định dạng năm-tháng từ trường created_at hoặc borrow_date
-            $driver = DB::getDriverName();
-            
-            if ($driver === 'sqlite') {
-                $monthFormat = "strftime('%Y-%m', borrow_date)";
-            } else {
-                $monthFormat = "DATE_FORMAT(borrow_date, '%Y-%m')";
-            }
+            $expr = self::MONTH_EXPR[DB::getDriverName()] ?? self::MONTH_EXPR['mysql'];
 
             return DB::table('borrow_records')
                 ->select(
-                    DB::raw("$monthFormat as thang"),
+                    DB::raw("$expr as thang"),
                     DB::raw("COUNT(DISTINCT id) as tong_phieu_muon"),
                     DB::raw("SUM(COALESCE(fine_amount, 0)) as tong_tien_phat")
                 )
