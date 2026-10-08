@@ -1,5 +1,5 @@
 #!/bin/bash
-echo "=== BẮT ĐẦU TRIỂN KHAI HỆ THỐNG THƯ VIỆN SỐ (BUỔI 6) ==="
+echo "=== BẮT ĐẦU TRIỂN KHAI HỆ THỐNG THƯ VIỆN SỐ (BUỔI 07) ==="
 
 # 1. Tạo tệp database.sqlite nếu chưa có tại thư mục gốc
 if [ ! -f "database.sqlite" ]; then
@@ -16,7 +16,7 @@ composer install --optimize-autoloader --no-dev
 # 4. Xóa sạch bộ nhớ tạm cấu hình
 php artisan config:clear
 
-# 5. Cập nhật CSDL và nạp dữ liệu biên tự động
+# 5. Cập nhật CSDL (bao gồm các Index mới của Buổi 7) và nạp dữ liệu biến tự động
 php artisan migrate --force
 php artisan db:seed --class=ExtendedDatasetSeeder --force
 
@@ -25,4 +25,4 @@ php artisan config:cache
 php artisan route:cache
 php artisan view:cache
 
-echo "=== TRIỂN KHAI THÀNH CÔNG PHIÊN BẢN BUỔI 6 ==="
+echo "=== TRIỂN KHAI THÀNH CÔNG PHIÊN BẢN BUỔI 07 ==="
