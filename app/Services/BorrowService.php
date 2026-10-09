@@ -19,7 +19,8 @@ class BorrowService
     public function __construct(
         protected BookRepository $books,
         protected BorrowRepository $borrows,
-        protected ActivityLogService $activityLogs
+        protected ActivityLogService $activityLogs,
+        protected ObjectAccessService $access
     ) {}
 
     /**
@@ -116,8 +117,11 @@ class BorrowService
     /**
      * LUỒNG 2: Trả sách và tính phạt
      */
-    public function returnBorrowTicket(int $ticketId): array
+    public function returnBorrowTicket(int $ticketId, object $actor): array
     {
+        // Buổi 8 - QT20: kiểm quyền trên đối tượng TRƯỚC khi mở giao dịch
+        $this->access->authorizeTicket($actor, $ticketId, ObjectAccessService::ACTION_RETURN);
+
         $result = DB::transaction(function () use ($ticketId) {
             // QT5: Phiếu mượn phải tồn tại
             $ticket = $this->borrows->findTicketForUpdate($ticketId);
@@ -176,8 +180,11 @@ class BorrowService
     /**
      * LUỒNG 3: Gia hạn phiếu mượn (Bổ sung Buổi 6)
      */
-    public function renewBorrowTicket(int $ticketId): array
+    public function renewBorrowTicket(int $ticketId, object $actor): array
     {
+        // Buổi 8 - QT20: kiểm quyền trên đối tượng TRƯỚC khi mở giao dịch
+        $this->access->authorizeTicket($actor, $ticketId, ObjectAccessService::ACTION_RENEW);
+
         $result = DB::transaction(function () use ($ticketId) {
             // 1. Khóa dòng phiếu mượn
             $ticket = $this->borrows->findTicketForUpdate($ticketId);
@@ -222,6 +229,32 @@ class BorrowService
         );
 
         return $result;
+    }
+
+    /**
+     * Buổi 8 - Xem chi tiết phiếu mượn (Admin/Thủ thư: mọi phiếu; Độc giả: chỉ phiếu của mình)
+     */
+    public function showTicket(int $ticketId, object $actor): array
+    {
+        $ticket = $this->access->authorizeTicket($actor, $ticketId, ObjectAccessService::ACTION_VIEW);
+
+        $lines = $this->borrows->getTicketItems($ticketId)->map(fn ($i) => [
+            'sach_id'  => (int) $i->sach_id,
+            'ten_sach' => $i->ten_sach,
+            'so_luong' => (int) $i->so_luong,
+            'tien_pat' => (float) $i->tien_pat,
+        ])->all();
+
+        return [
+            'phieu_muon_id'  => (int) $ticket->id,
+            'doc_gia_id'     => (int) $ticket->doc_gia_id,
+            'ngay_muon'      => $ticket->ngay_muon,
+            'han_tra'        => $ticket->han_tra,
+            'ngay_tra'       => $ticket->ngay_tra,
+            'trang_thai'     => $ticket->trang_thai,
+            'so_lan_gia_han' => (int) $ticket->so_lan_gia_han,
+            'sach'           => $lines,
+        ];
     }
 
     protected function calculateLateDays($dueAt, Carbon $returnedAt): int

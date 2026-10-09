@@ -57,6 +57,19 @@ class BorrowRepository
         return DB::table('phieu_muon')->where('id', $id)->lockForUpdate()->first();
     }
 
+    /**
+     * Buổi 8 - Lấy phiếu mượn kèm tài khoản sở hữu (doc_gia.user_id) để kiểm quyền đối tượng.
+     * Không khóa dòng: chỉ phục vụ kiểm quyền; nghiệp vụ vẫn khóa lại bên trong giao dịch.
+     */
+    public function findTicketWithOwner(int $id)
+    {
+        return DB::table('phieu_muon as pm')
+            ->join('doc_gia as dg', 'dg.id', '=', 'pm.doc_gia_id')
+            ->where('pm.id', $id)
+            ->select('pm.*', 'dg.user_id as chu_so_huu_user_id')
+            ->first();
+    }
+
     public function getTicketItems(int $ticketId): Collection
     {
         return DB::table('chi_tiet_phieu_muon as ct')
