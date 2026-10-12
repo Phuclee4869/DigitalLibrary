@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tra cứu nhật ký hệ thống - DigitalLibrary</title>
+<style>
+  :root { --bd:#d0d7de; --bg:#f6f8fa; --pri:#1f4e8c; }
+  * { box-sizing: border-box; }
+  body { font-family: Segoe UI, Arial, sans-serif; margin: 0; padding: 20px; color: #1f2328; background: #fff; }
+  h1 { font-size: 20px; color: var(--pri); margin: 0 0 12px; }
+  fieldset { border: 1px solid var(--bd); border-radius: 6px; padding: 12px; margin-bottom: 14px; background: var(--bg); }
+  legend { font-weight: 600; padding: 0 6px; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
+  label { display: flex; flex-direction: column; font-size: 12px; gap: 3px; }
+  input, select, button { padding: 6px 8px; border: 1px solid var(--bd); border-radius: 4px; font-size: 13px; }
+  button { background: var(--pri); color: #fff; cursor: pointer; border-color: var(--pri); }
+  button.sec { background: #fff; color: var(--pri); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid var(--bd); padding: 6px 8px; text-align: left; vertical-align: top; }
+  th { background: var(--bg); }
+  .meta { margin: 10px 0; font-size: 13px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  .err { color: #b42318; margin: 6px 0; font-size: 13px; }
+  .warn { color: #8a5a00; }
+  code { background: var(--bg); padding: 1px 4px; border-radius: 3px; }
+</style>
+</head>
+<body>
+<h1>Tra cứu nhật ký hệ thống</h1>
+
+<fieldset id="loginBox">
+  <legend>1. Đăng nhập (tài khoản Admin)</legend>
+  <div class="row">
+    <label>Email <input id="email" type="email" value="admin@gmail.com"></label>
+    <label>Mật khẩu <input id="password" type="password" autocomplete="current-password"></label>
+    <button id="btnLogin" type="button">Đăng nhập</button>
+    <span id="loginState">Chưa đăng nhập</span>
+  </div>
+  <div id="loginErr" class="err"></div>
+</fieldset>
+
+<fieldset>
+  <legend>2. Bộ lọc</legend>
+  <form id="filterForm" class="row">
+    <label>Từ khóa (mô tả) <input id="keyword" maxlength="100"></label>
+    <label>Hành động
+      <select id="hanh_dong">
+        <option value="">Tất cả</option>
+        <option value="auth">auth (đăng nhập)</option>
+        <option value="auth.login">auth.login</option>
+        <option value="auth.login_failed">auth.login_failed</option>
+        <option value="borrow">borrow (mượn/trả/gia hạn)</option>
+        <option value="borrow.create">borrow.create</option>
+        <option value="borrow.return">borrow.return</option>
+        <option value="borrow.renew">borrow.renew</option>
+        <option value="error.business">error.business</option>
+      </select>
+    </label>
+    <label>Mã người dùng <input id="user_id" type="number" min="1" style="width:100px"></label>
+    <label>Từ ngày <input id="from" type="date"></label>
+    <label>Đến ngày <input id="to" type="date"></label>
+    <label>Thứ tự
+      <select id="order"><option value="desc">Mới nhất trước</option><option value="asc">Cũ nhất trước</option></select>
+    </label>
+    <label>Dòng/trang <input id="per_page" type="number" min="1" value="10" style="width:80px"></label>
+    <button type="submit">Tra cứu</button>
+    <button type="button" class="sec" id="btnReset">Xóa lọc</button>
+  </form>
+  <div id="queryErr" class="err"></div>
+</fieldset>
+
+<div class="meta">
+  <span id="metaInfo">Chưa có dữ liệu</span>
+  <span id="clampInfo" class="warn"></span>
+  <button type="button" class="sec" id="btnPrev" disabled>&laquo; Trước</button>
+  <span id="pageInfo"></span>
+  <button type="button" class="sec" id="btnNext" disabled>Sau &raquo;</button>
+</div>
+
+<table>
+  <thead>
+    <tr><th>ID</th><th>Thời gian</th><th>Người dùng</th><th>Hành động</th><th>Đối tượng</th><th>Mô tả</th><th>IP</th></tr>
+  </thead>
+  <tbody id="rows"><tr><td colspan="7">Đăng nhập rồi bấm "Tra cứu".</td></tr></tbody>
+</table>
+
+<script>
+(function () {
+  'use strict';
+  var API = '/api/v1';
+  var token = null;      // chỉ giữ trong bộ nhớ trang, không lưu localStorage
+  var page = 1;
+  var lastPage = 1;
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  function setText(el, text) { el.textContent = text == null ? '' : String(text); }
+
+  async function login() {
+    setText($('loginErr'), '');
+    try {
+      var res = await fetch(API + '/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ email: $('email').value, password: $('password').value })
+      });
+      var data = await res.json();
+      if (!res.ok || !data.success) { throw new Error(data.message || 'Đăng nhập thất bại'); }
+      token = data.token;
+      $('password').value = '';
+      setText($('loginState'), 'Đã đăng nhập: ' + data.user.email + ' (role ' + data.user.role_id + ')');
+      page = 1;
+      search();
+    } catch (e) {
+      token = null;
+      setText($('loginState'), 'Chưa đăng nhập');
+      setText($('loginErr'), e.message);
+    }
+  }
+
+  function buildQuery() {
+    var p = new URLSearchParams();
+    ['keyword', 'hanh_dong', 'user_id', 'from', 'to', 'order', 'per_page'].forEach(function (k) {
+      var v = $(k).value.trim();
+      if (v !== '') { p.set(k, v); }
+    });
+    p.set('page', String(page));
+    return p.toString();
+  }
+
+  async function search() {
+    setText($('queryErr'), '');
+    if (!token) { setText($('queryErr'), 'Vui lòng đăng nhập trước.'); return; }
+    try {
+      var res = await fetch(API + '/activity-logs?' + buildQuery(), {
+        headers: { 'Accept': 'application/json', 'Authorization': 'Bearer ' + token }
+      });
+      var data = await res.json();
+      if (!res.ok) {
+        var msg = data.message || 'Lỗi ' + res.status;
+        if (data.details) { msg += ' ' + Object.values(data.details).flat().join(' '); }
+        throw new Error(msg);
+      }
+      render(data);
+    } catch (e) {
+      setText($('queryErr'), e.message);
+    }
+  }
+
+  function cell(tr, text) {
+    var td = document.createElement('td');
+    td.textContent = text == null ? '' : String(text);   // textContent: chống XSS từ nội dung nhật ký
+    tr.appendChild(td);
+  }
+
+  function render(data) {
+    var tbody = $('rows');
+    tbody.replaceChildren();
+    if (!data.data.length) {
+      var tr0 = document.createElement('tr');
+      var td0 = document.createElement('td');
+      td0.colSpan = 7; td0.textContent = 'Không có bản ghi phù hợp.';
+      tr0.appendChild(td0); tbody.appendChild(tr0);
+    }
+    data.data.forEach(function (r) {
+      var tr = document.createElement('tr');
+      cell(tr, r.id);
+      cell(tr, r.created_at);
+      cell(tr, r.user_email || (r.user_id ? '#' + r.user_id : '(khách)'));
+      cell(tr, r.hanh_dong);
+      cell(tr, r.doi_tuong ? r.doi_tuong + (r.doi_tuong_id ? ' #' + r.doi_tuong_id : '') : '');
+      cell(tr, r.mo_ta);
+      cell(tr, r.dia_chi_ip);
+      tbody.appendChild(tr);
+    });
+
+    var m = data.meta;
+    lastPage = m.last_page;
+    setText($('metaInfo'), 'Tổng ' + m.total + ' bản ghi' + (m.from ? ' | hiển thị ' + m.from + '–' + m.to : ''));
+    setText($('pageInfo'), 'Trang ' + m.current_page + '/' + m.last_page);
+    setText($('clampInfo'), m.da_gioi_han
+      ? 'Máy chủ giới hạn ' + m.per_page + ' dòng/trang (bạn yêu cầu ' + m.per_page_requested + ').' : '');
+    $('btnPrev').disabled = m.current_page <= 1;
+    $('btnNext').disabled = !m.has_more;
+  }
+
+  $('btnLogin').addEventListener('click', login);
+  $('filterForm').addEventListener('submit', function (e) { e.preventDefault(); page = 1; search(); });
+  $('btnReset').addEventListener('click', function () {
+    $('filterForm').reset(); $('per_page').value = 10; page = 1; if (token) { search(); }
+  });
+  $('btnPrev').addEventListener('click', function () { if (page > 1) { page--; search(); } });
+  $('btnNext').addEventListener('click', function () { if (page < lastPage) { page++; search(); } });
+})();
+</script>
+</body>
+</html>
