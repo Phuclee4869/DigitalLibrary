@@ -26,7 +26,7 @@ class SearchController extends Controller
             'message' => 'Tìm kiếm sách thành công.',
             'data'    => $r['data'],
             'meta'    => $r['meta'],
-        ]);
+        ])->header('X-Cache', $r['cache']); // Buổi 9: HIT | MISS
     }
 
     /** GET /api/v1/borrow-tickets – Tìm kiếm, lọc, phân trang phiếu mượn (Admin, Thủ thư) */

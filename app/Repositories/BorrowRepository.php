@@ -52,6 +52,40 @@ class BorrowRepository
         ]);
     }
 
+    /**
+     * Buổi 9 - Thêm TẤT CẢ dòng chi tiết bằng MỘT câu INSERT (thay cho một INSERT mỗi dòng).
+     *
+     * @param array<int,array{sach_id:int,so_luong:int}> $lines
+     */
+    public function addTicketItems(int $ticketId, array $lines): void
+    {
+        $now  = now();
+        $rows = array_map(fn ($l) => [
+            'phieu_muon_id' => $ticketId,
+            'sach_id'       => $l['sach_id'],
+            'so_luong'      => $l['so_luong'],
+            'tien_pat'      => 0.00,
+            'created_at'    => $now,
+            'updated_at'    => $now,
+        ], $lines);
+
+        DB::table('chi_tiet_phieu_muon')->insert($rows);
+    }
+
+    /**
+     * Buổi 9 - Ghi tiền phạt cho MỌI dòng của phiếu bằng MỘT câu UPDATE:
+     * tiền phạt dòng = số cuốn của dòng * (số ngày trễ * đơn giá mỗi cuốn mỗi ngày).
+     */
+    public function setFinesForTicket(int $ticketId, int $finePerBook): void
+    {
+        DB::table('chi_tiet_phieu_muon')
+            ->where('phieu_muon_id', $ticketId)
+            ->update([
+                'tien_pat'   => DB::raw('so_luong * ' . (int) $finePerBook),
+                'updated_at' => now(),
+            ]);
+    }
+
     public function findTicketForUpdate(int $id)
     {
         return DB::table('phieu_muon')->where('id', $id)->lockForUpdate()->first();
@@ -117,17 +151,13 @@ class BorrowRepository
      */
     public function searchTickets(array $f, int $perPage, int $page): LengthAwarePaginator
     {
-        $totalBooks = DB::table('chi_tiet_phieu_muon')
-            ->selectRaw('phieu_muon_id, SUM(so_luong) as tong_so_sach')
-            ->groupBy('phieu_muon_id');
-
+        // Buổi 9: KHÔNG còn nối với truy vấn con SUM(...) GROUP BY trên TOÀN BẢNG chi tiết.
+        // Truy vấn con cũ phải tổng hợp mọi phiếu dù trang chỉ trả tối đa 50 dòng.
         $query = DB::table('phieu_muon as pm')
             ->join('doc_gia as dg', 'dg.id', '=', 'pm.doc_gia_id')
-            ->leftJoinSub($totalBooks, 'ct', 'ct.phieu_muon_id', '=', 'pm.id')
             ->select(
                 'pm.id', 'pm.doc_gia_id', 'dg.ho_ten', 'pm.ngay_muon', 'pm.han_tra',
-                'pm.ngay_tra', 'pm.trang_thai', 'pm.so_lan_gia_han',
-                DB::raw('COALESCE(ct.tong_so_sach, 0) as tong_so_sach')
+                'pm.ngay_tra', 'pm.trang_thai', 'pm.so_lan_gia_han'
             );
 
         foreach (SearchSupport::splitTerms($f['keyword'] ?? null) as $term) {
@@ -158,6 +188,23 @@ class BorrowRepository
             $query->orderBy('pm.id', 'desc');
         }
 
-        return $query->paginate($perPage, ['*'], 'page', $page);
+        $result = $query->paginate($perPage, ['*'], 'page', $page);
+
+        // Bước 2: tổng số sách CHỈ cho các phiếu của trang hiện tại (một truy vấn, tối đa 50 mã).
+        $ids = collect($result->items())->pluck('id')->all();
+        $totals = $ids
+            ? DB::table('chi_tiet_phieu_muon')
+                ->whereIn('phieu_muon_id', $ids)
+                ->groupBy('phieu_muon_id')
+                ->selectRaw('phieu_muon_id, SUM(so_luong) as tong_so_sach')
+                ->pluck('tong_so_sach', 'phieu_muon_id')
+            : collect();
+
+        $result->through(function ($row) use ($totals) {
+            $row->tong_so_sach = (int) ($totals[$row->id] ?? 0);
+            return $row;
+        });
+
+        return $result;
     }
 }
