@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Exceptions\BusinessException;
 use App\Repositories\BookRepository;
 use App\Repositories\BorrowRepository;
+use App\Support\CatalogCache;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -56,10 +57,7 @@ class BorrowService
             $sortedIds = $items->pluck('sach_id')->sort()->values()->all();
             $booksMap = $this->books->getBooksForUpdate($sortedIds);
 
-            $now = now();
-            $due = $now->copy()->addDays(self::LOAN_DAYS);
-            $ticketId = $this->borrows->createTicket($reader->id, $userId, $now, $due);
-
+            // Buổi 9: kiểm TOÀN BỘ dòng (QT3, QT4) trước khi ghi bất cứ thứ gì; thứ tự báo lỗi giữ nguyên theo dòng.
             $lines = [];
             foreach ($items as $item) {
                 $book = $booksMap->get($item['sach_id']);
@@ -79,18 +77,26 @@ class BorrowService
                     );
                 }
 
-                $this->borrows->addTicketItem($ticketId, $item['sach_id'], $item['so_luong']);
-
-                // Trừ kho nguyên tố
-                if (!$this->books->decreaseStock($item['sach_id'], $item['so_luong'])) {
-                    throw new BusinessException("Không thể cập nhật kho cho sách ID {$item['sach_id']}.", 'OUT_OF_STOCK', 409, ['sach_id' => $item['sach_id']]);
-                }
-
                 $lines[] = [
                     'sach_id'  => $item['sach_id'],
                     'ten_sach' => $book->ten_sach,
                     'so_luong' => $item['so_luong'],
                 ];
+            }
+
+            $now = now();
+            $due = $now->copy()->addDays(self::LOAN_DAYS);
+            $ticketId = $this->borrows->createTicket($reader->id, $userId, $now, $due);
+
+            // Buổi 9: MỘT INSERT cho mọi dòng chi tiết + MỘT UPDATE trừ kho (trước đây 2 câu cho mỗi đầu sách).
+            $this->borrows->addTicketItems($ticketId, $lines);
+
+            $qtyByBook = [];
+            foreach ($lines as $l) {
+                $qtyByBook[$l['sach_id']] = $l['so_luong'];
+            }
+            if (!$this->books->decreaseStockBulk($qtyByBook)) {
+                throw new BusinessException('Không thể cập nhật kho cho phiếu mượn.', 'OUT_OF_STOCK', 409);
             }
 
             return [
@@ -102,6 +108,9 @@ class BorrowService
                 'sach'          => $lines,
             ];
         });
+
+        // Buổi 9: tồn kho đã đổi -> bỏ bộ nhớ đệm danh mục sách (SAU khi commit)
+        CatalogCache::invalidate();
 
         // Buổi 7: ghi nhật ký SAU khi giao dịch đã commit
         $this->activityLogs->record(
@@ -137,16 +146,21 @@ class BorrowService
             $returnedAt = now();
             $lateDays = $this->calculateLateDays($ticket->han_tra, $returnedAt);
 
+            // Buổi 9: đọc dòng chi tiết MỘT lần, rồi ghi phạt và cộng kho bằng 2 câu UPDATE
+            // (trước đây: 2 câu UPDATE cho mỗi dòng -> 2N câu).
+            $items      = $this->borrows->getTicketItems($ticketId);
+            $finePerBook = $lateDays * self::FINE_PER_BOOK_PER_DAY;
+
             $lines = [];
             $totalFine = 0.0;
+            $qtyByBook = [];
 
-            foreach ($this->borrows->getTicketItems($ticketId) as $item) {
+            foreach ($items as $item) {
                 // QT7: Tiền phạt = trễ ngày * số cuốn * đơn giá
                 $fine = (float) ($lateDays * $item->so_luong * self::FINE_PER_BOOK_PER_DAY);
                 $totalFine += $fine;
 
-                $this->borrows->updateItemFine($item->id, $fine);
-                $this->books->increaseStock((int)$item->sach_id, (int)$item->so_luong);
+                $qtyByBook[(int) $item->sach_id] = ($qtyByBook[(int) $item->sach_id] ?? 0) + (int) $item->so_luong;
 
                 $lines[] = [
                     'sach_id'  => (int)$item->sach_id,
@@ -155,6 +169,10 @@ class BorrowService
                     'tien_pat' => $fine,
                 ];
             }
+
+            $this->borrows->setFinesForTicket($ticketId, $finePerBook);
+            ksort($qtyByBook); // cùng thứ tự khóa dòng với luồng mượn (QT13)
+            $this->books->increaseStockBulk($qtyByBook);
 
             $this->borrows->markReturned($ticketId, $returnedAt);
 
@@ -167,6 +185,9 @@ class BorrowService
                 'sach'           => $lines,
             ];
         });
+
+        // Buổi 9: tồn kho đã đổi -> bỏ bộ nhớ đệm danh mục sách (SAU khi commit)
+        CatalogCache::invalidate();
 
         $this->activityLogs->record(
             'borrow.return', 'phieu_muon', $ticketId,

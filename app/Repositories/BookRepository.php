@@ -54,6 +54,70 @@ class BookRepository
     }
 
     /**
+     * Buổi 9 - Trừ kho NHIỀU đầu sách bằng MỘT câu UPDATE (thay cho một UPDATE mỗi đầu sách).
+     * Điều kiện "còn đủ" được kiểm cho từng dòng; trả false nếu có dòng không được cập nhật.
+     * Gọi bên trong giao dịch đã khóa các dòng sách (getBooksForUpdate).
+     *
+     * @param array<int,int> $qtyByBook  [sach_id => số lượng]
+     */
+    public function decreaseStockBulk(array $qtyByBook): bool
+    {
+        if (!$qtyByBook) {
+            return true;
+        }
+
+        [$case, $caseBindings] = $this->caseByBook($qtyByBook);
+        $ids = array_keys($qtyByBook);
+
+        $sql = "UPDATE sach SET so_luong_con_lai = so_luong_con_lai - {$case}"
+             . ' WHERE id IN (' . implode(',', array_fill(0, count($ids), '?')) . ')'
+             . " AND so_luong_con_lai >= {$case}";
+
+        $affected = DB::update($sql, array_merge($caseBindings, $ids, $caseBindings));
+
+        return $affected === count($ids);
+    }
+
+    /**
+     * Buổi 9 - Cộng kho NHIỀU đầu sách bằng MỘT câu UPDATE khi trả sách.
+     *
+     * @param array<int,int> $qtyByBook  [sach_id => số lượng]
+     */
+    public function increaseStockBulk(array $qtyByBook): void
+    {
+        if (!$qtyByBook) {
+            return;
+        }
+
+        [$case, $caseBindings] = $this->caseByBook($qtyByBook);
+        $ids = array_keys($qtyByBook);
+
+        $sql = "UPDATE sach SET so_luong_con_lai = so_luong_con_lai + {$case}"
+             . ' WHERE id IN (' . implode(',', array_fill(0, count($ids), '?')) . ')';
+
+        DB::update($sql, array_merge($caseBindings, $ids));
+    }
+
+    /**
+     * Biểu thức "CASE id WHEN ? THEN ? ... END" và các giá trị ràng buộc (không nối chuỗi từ đầu vào).
+     *
+     * @return array{0: string, 1: array<int,int>}
+     */
+    private function caseByBook(array $qtyByBook): array
+    {
+        $sql = 'CASE id';
+        $bindings = [];
+
+        foreach ($qtyByBook as $id => $qty) {
+            $sql .= ' WHEN ? THEN ?';
+            $bindings[] = (int) $id;
+            $bindings[] = (int) $qty;
+        }
+
+        return [$sql . ' END', $bindings];
+    }
+
+    /**
      * Buổi 7 - Tìm kiếm, lọc, sắp xếp và phân trang danh sách sách.
      * - Mỗi từ khóa phải khớp tên sách HOẶC tác giả; các từ khóa kết hợp bằng AND.
      * - Sắp xếp luôn kèm id làm khóa phụ để thứ tự ổn định => không lặp/sót bản ghi giữa các trang.
