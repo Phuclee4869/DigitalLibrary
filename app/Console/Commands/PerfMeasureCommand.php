@@ -129,7 +129,7 @@ class PerfMeasureCommand extends Command
                 CatalogCache::invalidate();
             }
 
-            [$status, $ms, $q, $xcache] = $this->call($s['method'], $uri, $token);
+            [$status, $ms, $q, $xcache] = $this->callApi($s['method'], $uri, $token);
             if ($status !== 200) {
                 throw new \RuntimeException("{$name}: mong đợi 200, nhận {$status}");
             }
@@ -167,13 +167,13 @@ class PerfMeasureCommand extends Command
             $createTimes = $createQ = $returnTimes = $returnQ = [];
 
             for ($i = 0; $i < $warmup + $runs; $i++) {
-                [$st, $ms, $q, , $content] = $this->call('POST', '/api/v1/borrow-tickets', $token, $body);
+                [$st, $ms, $q, , $content] = $this->callApi('POST', '/api/v1/borrow-tickets', $token, $body);
                 if ($st !== 201) {
                     throw new \RuntimeException("POST /borrow-tickets: mong đợi 201, nhận {$st} - {$content}");
                 }
                 $ticketId = (int) json_decode($content, true)['data']['phieu_muon_id'];
 
-                [$st2, $ms2, $q2, , $content2] = $this->call('POST', "/api/v1/borrow-tickets/{$ticketId}/return", $token);
+                [$st2, $ms2, $q2, , $content2] = $this->callApi('POST', "/api/v1/borrow-tickets/{$ticketId}/return", $token);
                 if ($st2 !== 200) {
                     throw new \RuntimeException("POST return: mong đợi 200, nhận {$st2} - {$content2}");
                 }
@@ -204,10 +204,10 @@ class PerfMeasureCommand extends Command
     }
 
     /** @return array{0:int,1:float,2:int,3:?string,4:string} */
-    private function call(string $method, string $uri, string $token, array $json = []): array
+    private function callApi(string $method, string $uri, string $token, array $json = []): array
     {
         Auth::forgetGuards();          // mỗi lần gọi nhận diện lại token như một yêu cầu mới
-        $this->limiterStore->flush();  // không bị throttle
+        $this->limiterStore->flush();  // không bị throttlex
 
         $server = [
             'HTTP_ACCEPT'        => 'application/json',

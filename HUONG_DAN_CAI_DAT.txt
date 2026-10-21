@@ -1,0 +1,39 @@
+HUONG DAN CAI DAT - DIGITALLIBRARY (Nhom 18)
+Dung cho phep thu dung lai tren may sach (Buoi 10). Chi dung tep nay, khong hoi them.
+
+0. YEU CAU MAY
+   - Windows 10/11, PowerShell 5.1 tro len
+   - PHP >= 8.2 (bat extension: pdo_sqlite, sqlite3, mbstring, openssl, fileinfo, curl, tokenizer, xml, ctype)
+   - Composer 2.x
+   - Khong can MySQL, khong can Node.js (CSDL dung SQLite)
+   Kiem tra:  php -v      composer -V      php -m | findstr /i sqlite
+
+1. GIAI NEN
+   Giai nen tep nop vao mot thu muc moi, vi du C:\DigitalLibrary
+   Mo PowerShell tai thu muc goc (noi co tep artisan va composer.json).
+
+2. CAC LENH (chay lan luot; hoac chay tu dong: powershell -ExecutionPolicy Bypass -File .\rebuild_check.ps1)
+   composer install
+   copy .env.example .env
+   php artisan key:generate
+   type nul > database\database.sqlite
+   php artisan migrate --force
+   php artisan db:seed --class=BorrowFlowSeeder --force
+   php artisan db:seed --class=SearchDemoSeeder --force
+   php artisan cache:clear
+   php artisan serve
+
+   Ghi chu:
+   - .env khong nam trong kho ma (bi .gitignore), phai tao tu .env.example.
+   - Neu bao "could not find driver": mo php.ini, bo dau ; truoc extension=pdo_sqlite va extension=sqlite3.
+   - Neu cong 8000 ban: php artisan serve --port=8001.
+
+3. TAI KHOAN KIEM THU (mat khau chung: 123456)
+   admin@gmail.com   - Admin (role 1)
+   thuthu@gmail.com  - Thu thu (role 2)
+   docgia@gmail.com  - Doc gia (role 3)
+
+4. KIEM TRA NHANH
+   POST http://127.0.0.1:8000/api/v1/login  {"email":"admin@gmail.com","password":"123456"}  -> 200 + token
+   GET  http://127.0.0.1:8000/api/v1/books  -> 200, co header X-Cache
+   Chay bo kiem tra tu dong: php artisan test --filter="CatalogCacheTest|SearchPaginationTest"

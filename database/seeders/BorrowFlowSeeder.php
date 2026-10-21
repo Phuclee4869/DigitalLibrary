@@ -10,9 +10,14 @@ class BorrowFlowSeeder extends Seeder
 {
     /**
      * Dữ liệu tối thiểu để chạy thử 3 luồng mượn - trả - gia hạn đầu-cuối.
+     * Buổi 10: tự nạp bảng roles trước, vì users.role_id có khóa ngoại tới roles(id);
+     * trên máy sạch không có roles thì việc tạo tài khoản bị từ chối (SQLite bật khóa ngoại).
      */
     public function run(): void
     {
+        // 0. Vai trò (id 1 = admin, 2 = librarian, 3 = reader); chạy lại không nhân đôi
+        $this->call(RoleSeeder::class);
+
         // 1. Tạo tài khoản người dùng
         $accounts = [
             ['admin@gmail.com', 'Admin', 1],
