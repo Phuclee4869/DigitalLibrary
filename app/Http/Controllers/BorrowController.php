@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Requests\BorrowTicketRequest;
 use App\Services\BorrowService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 class BorrowController extends Controller
 {
@@ -28,11 +29,25 @@ class BorrowController extends Controller
     }
 
     /**
+     * GET /api/v1/borrow-tickets/{id} – Buổi 8: Xem chi tiết phiếu mượn (kiểm quyền đối tượng)
+     */
+    public function show(Request $request, int $id): JsonResponse
+    {
+        $result = $this->borrowService->showTicket($id, $request->user());
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Lấy chi tiết phiếu mượn thành công.',
+            'data'    => $result,
+        ]);
+    }
+
+    /**
      * POST /api/v1/borrow-tickets/{id}/return – Luồng 2: Trả sách
      */
-    public function returnBooks(int $id): JsonResponse
+    public function returnBooks(Request $request, int $id): JsonResponse
     {
-        $result = $this->borrowService->returnBorrowTicket($id);
+        $result = $this->borrowService->returnBorrowTicket($id, $request->user());
 
         return response()->json([
             'success' => true,
@@ -44,9 +59,9 @@ class BorrowController extends Controller
     /**
      * POST /api/v1/borrow-tickets/{id}/renew – Luồng 3: Gia hạn phiếu mượn
      */
-    public function renew(int $id): JsonResponse
+    public function renew(Request $request, int $id): JsonResponse
     {
-        $result = $this->borrowService->renewBorrowTicket($id);
+        $result = $this->borrowService->renewBorrowTicket($id, $request->user());
 
         return response()->json([
             'success' => true,
